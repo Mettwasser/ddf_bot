@@ -6,6 +6,7 @@
         "dotenv",
         "gevotet",
         "thiserror",
-        "tokio"
+        "tokio",
+        "votings"
     ]
 }

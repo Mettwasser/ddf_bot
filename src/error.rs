@@ -1,17 +1,9 @@
 use {
-    crate::{
-        commands::{
-            game::NeedsActiveGameError,
-            vote::{AlreadyVotedError, NeedsActiveVotingError, NotInGameError},
-        },
-        utils::MissingRole,
-        Context, Error, FrameworkError,
-    },
+    crate::{utils::MissingRole, Context, Error, FrameworkError},
     poise::{
         serenity_prelude::{self, Color, CreateEmbed, Mentionable, RoleId},
         CreateReply,
     },
-    thiserror::Error,
 };
 
 pub fn error_embed(description: impl Into<String>) -> CreateEmbed {
@@ -53,24 +45,12 @@ pub async fn handle_command_check_error(
     err: Error,
     ctx: Context<'_>,
 ) -> Result<(), serenity_prelude::Error> {
-    if let Some(err) = err.downcast_ref::<NeedsActiveGameError>() {
-        ctx.send(CreateReply::default().embed(error_embed(err.0)))
-            .await?;
-    } else if let Some(err) = err.downcast_ref::<MissingRole>() {
+    if let Some(err) = err.downcast_ref::<MissingRole>() {
         ctx.send(CreateReply::default().embed(error_embed(format!(
-            "Missing {} role",
+            "Dir fehlt die {} Rolle!",
             ctx.guild_id().unwrap().roles(ctx).await?.get(&RoleId::new(err.0)).unwrap().mention()
         ))))
         .await?;
-    } else if let Some(err) = err.downcast_ref::<NeedsActiveVotingError>() {
-        ctx.send(CreateReply::default().embed(error_embed(err.to_string())))
-            .await?;
-    } else if let Some(err) = err.downcast_ref::<AlreadyVotedError>() {
-        ctx.send(CreateReply::default().embed(error_embed(err.to_string())))
-            .await?;
-    } else if let Some(err) = err.downcast_ref::<NotInGameError>() {
-        ctx.send(CreateReply::default().embed(error_embed(err.to_string())))
-            .await?;
     } else {
         poise::builtins::on_error(poise::FrameworkError::new_command(ctx, err)).await?;
     }

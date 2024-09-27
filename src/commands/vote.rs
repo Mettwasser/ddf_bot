@@ -12,21 +12,14 @@ use {
         UserId,
     },
     std::{collections::HashMap, time::Duration},
-    thiserror::Error,
 };
 use {crate::CmdRet, poise::command};
 use {crate::Context, poise::CreateReply};
 
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct NeedsActiveVotingError(pub &'static str);
-
 pub async fn needs_active_voting(ctx: Context<'_>) -> Result<bool, Error> {
     match &*ctx.data().active_voting.lock().await {
         Some(_) => Ok(true),
-        None => Err(Box::new(NeedsActiveVotingError(
-            "Es gibt kein aktives Voting",
-        ))),
+        None => Err("Es gibt kein aktives Voting".into()),
     }
 }
 
@@ -41,45 +34,31 @@ pub fn mentioned_user_in_game_and_alive(game: &Game, mentioned_user: &User) -> R
     }
 }
 
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct AlreadyVotedError(pub &'static str);
-
 /// Also checks for an active voting
 pub async fn did_not_vote(ctx: Context<'_>) -> Result<bool, Error> {
     match &*ctx.data().active_voting.lock().await {
         Some(voting) => {
             if voting.map.contains_key(&ctx.author().id) {
-                Err(Box::new(AlreadyVotedError("Du hast schon gevotet!")))
+                Err("Du hast schon gevotet!".into())
             } else {
                 Ok(true)
             }
         },
-        None => Err(Box::new(NeedsActiveVotingError(
-            "Es gibt kein aktives Voting",
-        ))),
+        None => Err("Es gibt kein aktives Voting".into()),
     }
 }
-
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct NotInGameError(pub String);
 
 /// Also checks for an active game
 pub async fn is_in_game(ctx: Context<'_>) -> Result<bool, Error> {
     match &*ctx.data().game.lock().await {
         Some(game) => {
             if !game.members.contains_key(&ctx.author().id) {
-                Err(Box::new(NotInGameError(
-                    "Du bist diesem Spiel nicht beigetreten!".to_owned(),
-                )))
+                Err("Du bist diesem Spiel nicht beigetreten!".into())
             } else {
                 Ok(true)
             }
         },
-        None => Err(Box::new(NeedsActiveVotingError(
-            "Es gibt kein aktives Voting",
-        ))),
+        None => Err("Es gibt kein aktives Voting".into()),
     }
 }
 

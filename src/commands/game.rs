@@ -10,7 +10,6 @@ use {
         CreateReply,
     },
     std::{collections::HashMap, time::Duration},
-    thiserror::Error,
 };
 
 fn get_remaining_lives_string(number_of_lives: i32) -> String {
@@ -19,16 +18,10 @@ fn get_remaining_lives_string(number_of_lives: i32) -> String {
 
 has_role!(has_mod_role, 1282277932798312513);
 
-#[derive(Debug, Error)]
-#[error("{0}")]
-pub struct NeedsActiveGameError(pub &'static str);
-
 pub async fn needs_active_game(ctx: Context<'_>) -> Result<bool, Error> {
     match &*ctx.data().game.lock().await {
         Some(_) => Ok(true),
-        None => Err(Box::new(NeedsActiveGameError(
-            "Es ist kein aktives Spiel vorhanden",
-        ))),
+        None => Err("Es ist kein aktives Spiel vorhanden".into()),
     }
 }
 
