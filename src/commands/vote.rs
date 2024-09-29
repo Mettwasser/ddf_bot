@@ -1,74 +1,45 @@
-use {
-    super::game::has_mod_role,
-    crate::{
-        commands::game::needs_active_game,
-        game::{Game, Voting},
-        Error, DEFAULT_COLOR,
-    },
-    poise::serenity_prelude::{
-        futures::StreamExt, ButtonStyle, Color, ComponentInteraction,
-        ComponentInteractionCollector, CreateActionRow, CreateButton, CreateEmbed,
-        CreateInteractionResponse, CreateInteractionResponseMessage, Member, Mentionable, User,
+use std::{collections::HashMap, time::Duration};
+
+use itertools::Itertools;
+use poise::{
+    command,
+    serenity_prelude::{
+        futures::StreamExt,
+        ButtonStyle,
+        Color,
+        ComponentInteraction,
+        ComponentInteractionCollector,
+        CreateActionRow,
+        CreateButton,
+        CreateEmbed,
+        CreateInteractionResponse,
+        CreateInteractionResponseMessage,
+        Member,
+        Mentionable,
         UserId,
     },
-    std::{collections::HashMap, time::Duration},
+    CreateReply,
 };
-use {crate::CmdRet, poise::command};
-use {crate::Context, poise::CreateReply};
 
-pub async fn needs_active_voting(ctx: Context<'_>) -> Result<bool, Error> {
-    match &*ctx.data().active_voting.lock().await {
-        Some(_) => Ok(true),
-        None => Err("Es gibt kein aktives Voting".into()),
-    }
-}
+use crate::{
+    checks::{
+        author_is_alive,
+        did_not_vote,
+        is_game_moderator,
+        is_in_game,
+        needs_active_game,
+        needs_active_voting,
+    },
+    game::Voting,
+    CmdRet,
+    Context,
+    DEFAULT_COLOR,
+};
 
-pub fn mentioned_user_in_game_and_alive(game: &Game, mentioned_user: &User) -> Result<(), Error> {
-    match game.members.get(&mentioned_user.id) {
-        // user alive
-        Some(&hp) if hp > 0 => Ok(()),
-        // user dead
-        Some(_) => Err(format!("❌ {} ist ausgeschieden!", mentioned_user.mention()).into()),
-        // user not in game
-        None => Err(format!("{} ist nicht im Spiel!", mentioned_user.mention()).into()),
-    }
-}
-
-/// Also checks for an active voting
-pub async fn did_not_vote(ctx: Context<'_>) -> Result<bool, Error> {
-    match &*ctx.data().active_voting.lock().await {
-        Some(voting) => {
-            if voting.map.contains_key(&ctx.author().id) {
-                Err("Du hast schon gevotet!".into())
-            } else {
-                Ok(true)
-            }
-        },
-        None => Err("Es gibt kein aktives Voting".into()),
-    }
-}
-
-/// Also checks for an active game
-pub async fn is_in_game(ctx: Context<'_>) -> Result<bool, Error> {
-    match &*ctx.data().game.lock().await {
-        Some(game) => {
-            if !game.members.contains_key(&ctx.author().id) {
-                Err("Du bist diesem Spiel nicht beigetreten!".into())
-            } else {
-                Ok(true)
-            }
-        },
-        None => Err("Es gibt kein aktives Voting".into()),
-    }
-}
-
-#[command(slash_command, rename = "start-voting", guild_only, check = has_mod_role, check = needs_active_game)]
+#[command(slash_command, rename = "start-voting", guild_only, check = needs_active_game, check = is_game_moderator)]
 pub async fn start_voting(ctx: Context<'_>) -> CmdRet {
-    let Context::Application(app_ctx) = &ctx else {
-        unreachable!()
-    };
-    let creator = app_ctx.interaction.member.as_ref().unwrap();
-    if ctx.data().active_voting.lock().await.is_some() {
+    let creator = ctx.interaction.member.as_ref().unwrap();
+    if ctx.data().voting.lock().await.is_some() {
         prompt_override_vote(ctx, creator).await
     } else {
         create_new_vote(ctx, creator, None).await
@@ -83,7 +54,7 @@ pub async fn prompt_override_vote(ctx: Context<'_>, creator: &Member) -> CmdRet 
     ctx.send(
         CreateReply::default()
             .embed(
-                CreateEmbed::new()
+                CreateEmbed::default()
                     .description("Es gibt ein laufendes Voting.\nMöchtest du es überschreiben?")
                     .color(Color::RED),
             )
@@ -114,7 +85,7 @@ pub async fn prompt_override_vote(ctx: Context<'_>, creator: &Member) -> CmdRet 
                         CreateInteractionResponse::UpdateMessage(
                             CreateInteractionResponseMessage::new()
                                 .embed(
-                                    CreateEmbed::new()
+                                    CreateEmbed::default()
                                         .description("Abgebrochen")
                                         .color(Color::RED),
                                 )
@@ -134,14 +105,11 @@ pub async fn create_new_vote(
     creator: &Member,
     edit_on: Option<ComponentInteraction>,
 ) -> CmdRet {
-    let mut active_voting = ctx.data().active_voting.lock().await;
+    let mut active_voting = ctx.data().voting.lock().await;
 
-    let embed = CreateEmbed::new()
+    let embed = CreateEmbed::default()
         .title("Vote gestartet")
-        .description(format!(
-            "🕛 Das Voting wurde mit {} als Moderator wurde erfolgreich gestartet.\nMan kann absofort voten!",
-            creator.mention()
-        ))
+        .description("🕛 Das Voting wurde gestartet.\nMan kann absofort voten.")
         .color(DEFAULT_COLOR);
 
     *active_voting = Some(Voting {
@@ -167,7 +135,7 @@ pub async fn create_new_vote(
     Ok(())
 }
 
-#[command(slash_command, guild_only, check = is_in_game, check = did_not_vote)]
+#[command(slash_command, guild_only, check = needs_active_game, check = needs_active_voting, check = is_in_game, check = did_not_vote, check = author_is_alive)]
 pub async fn vote(
     ctx: Context<'_>,
     #[description = "Den User, den du voten willst"]
@@ -175,80 +143,161 @@ pub async fn vote(
     member: Member,
 ) -> CmdRet {
     {
-        let mut active_voting = ctx.data().active_voting.lock().await;
+        let mut active_voting = ctx.data().voting.lock().await;
         let active_voting = active_voting.as_mut().unwrap();
 
-        let mut game = ctx.data().game.lock().await;
-        let game = game.as_mut().unwrap();
+        let mut lock = ctx.data().game.lock().await;
+        let game = lock.as_mut().unwrap();
 
-        mentioned_user_in_game_and_alive(game, &member.user)?;
+        match game.members.get(&member.user.id) {
+            // user dead
+            Some(&hp) if (hp <= 0) => {
+                return Err(format!("❌ {} ist ausgeschieden.", member.mention()).into())
+            },
+            // user not in game
+            None => return Err(format!("{} ist nicht im Spiel.", member.mention()).into()),
+
+            _ => (),
+        };
+
         active_voting.map.insert(ctx.author().id, member.user.id);
     }
 
-    let embed = CreateEmbed::new()
+    let embed = CreateEmbed::default()
         .title("Voting")
-        .description(format!("✅ {} hat gevotet!", ctx.author().mention()))
+        .description(format!("✅ {} hat gevotet.", ctx.author().mention()))
         .color(DEFAULT_COLOR);
 
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
 }
 
-#[command(slash_command, rename = "end-voting", guild_only, check = has_mod_role, check = needs_active_voting, check = needs_active_game)]
+enum VoteOutcome {
+    NoClearWinner {
+        members_with_equal_votes_count: i32,
+        max_vote_count: i32,
+    },
+    ClearWinner {
+        user: UserId,
+        num_votes: i32,
+    },
+}
+
+fn evaluate_votes(votes: &HashMap<UserId, i32>) -> VoteOutcome {
+    let max_num_of_votes = *votes.values().max_by_key(|n| **n).unwrap();
+    let n = votes
+        .values()
+        .filter(|num| **num == max_num_of_votes)
+        .count();
+
+    if n > 1 {
+        VoteOutcome::NoClearWinner {
+            members_with_equal_votes_count: n as i32,
+            max_vote_count: max_num_of_votes,
+        }
+    } else {
+        let (user, num_votes) = votes
+            .iter()
+            .max_by_key(|(_, amount_votes)| *amount_votes)
+            .map(|(user_id, num)| (user_id.to_owned(), num.to_owned()))
+            .unwrap();
+
+        VoteOutcome::ClearWinner { user, num_votes }
+    }
+}
+
+fn get_voting_count_overview(votes: &HashMap<UserId, i32>) -> CreateEmbed {
+    let mut description = String::new();
+
+    for (user, amount_votes) in votes.iter().sorted_by(|a, b| a.1.cmp(b.1)) {
+        description.push_str(&format!("`[{:>2}]` - {}\n", amount_votes, user.mention()));
+    }
+
+    CreateEmbed::default()
+        .title("Anzahl der Votes")
+        .description(description)
+        .color(DEFAULT_COLOR)
+}
+
+#[command(slash_command, rename = "end-voting", guild_only, check = needs_active_voting, check = needs_active_game, check = is_game_moderator)]
 pub async fn end_voting(ctx: Context<'_>) -> CmdRet {
-    let mut active_voting = ctx.data().active_voting.lock().await;
+    let mut active_voting = ctx.data().voting.lock().await;
     let mut game = ctx.data().game.lock().await;
 
-    let mut description = String::new();
+    let mut who_voted_who_description = String::new();
     let mut votes: HashMap<UserId, i32> = HashMap::new();
+
+    let mut member_died_embed: Option<CreateEmbed> = None;
 
     let mut reply = CreateReply::default();
 
     let guild = ctx.guild_id().unwrap();
+
+    // Create vote `Member -> Amount of Votes` mapping
     for (voter, voted) in &active_voting.as_ref().unwrap().map {
         let voter_member = guild.member(ctx, voter).await?;
         let voted_member = guild.member(ctx, voted).await?;
 
         votes.entry(*voted).and_modify(|num| *num += 1).or_insert(1);
 
-        description.push_str(&format!(
+        who_voted_who_description.push_str(&format!(
             "{} hat {} gevotet!\n\n",
             voter_member.mention(),
             voted_member.mention()
         ))
     }
 
-    let (voted_highest, _) = votes
-        .into_iter()
-        .max_by_key(|elem| elem.1)
-        .ok_or("Es hat niemand gevotet!")?;
+    match evaluate_votes(&votes) {
+        VoteOutcome::ClearWinner { user, num_votes } => {
+            // ...and remove 1 hp from them
+            game.as_mut()
+                .unwrap()
+                .members
+                .entry(user)
+                .and_modify(|hp| *hp -= 1);
+            let member = guild.member(ctx, user).await?;
 
-    game.as_mut()
-        .unwrap()
-        .members
-        .entry(voted_highest)
-        .and_modify(|hp| *hp -= 1);
+            who_voted_who_description.push_str(&format!(
+                "**{member} hat mit `{num_votes}` die meisten votes und verliert ein Leben!**"
+            ));
 
-    let member = guild.member(ctx, voted_highest).await?;
-
-    description.push_str(&format!(
-        "**{member} hat die meisten votes und verliert ein Leben!**"
-    ));
-
-    reply = reply.embed(
-        CreateEmbed::new()
-            .title("Voting ist zuende!")
-            .description(description)
-            .color(DEFAULT_COLOR),
-    );
-
-    if *game.as_ref().unwrap().members.get(&voted_highest).unwrap() <= 0 {
-        reply = reply.embed(
-            CreateEmbed::new()
-                .description(format!("{member} is ausgeschieden!"))
-                .color(DEFAULT_COLOR),
-        )
+            // check if the member that lost a life 'died' this round
+            if *game.as_ref().unwrap().members.get(&user).unwrap() <= 0 {
+                member_died_embed = Some(
+                    CreateEmbed::default()
+                        .description(format!("{member} is ausgeschieden."))
+                        .color(DEFAULT_COLOR),
+                )
+            }
+        },
+        VoteOutcome::NoClearWinner {
+            members_with_equal_votes_count,
+            max_vote_count: max_votes,
+        } => who_voted_who_description.push_str(&format!(
+            "**{} Leute haben mit {} gleich viele Votes - Gleichstand!**",
+            members_with_equal_votes_count, max_votes
+        )),
     }
+
+    // construct embed(s)
+    {
+        // overview - who voted which person?
+        reply = reply.embed(
+            CreateEmbed::default()
+                .title("Voting ist zuende.")
+                .description(who_voted_who_description)
+                .color(DEFAULT_COLOR),
+        );
+
+        // overview of all votes
+        reply = reply.embed(get_voting_count_overview(&votes));
+
+        // additional info whether a member died in this round
+        if let Some(member_died_embed) = member_died_embed {
+            reply = reply.embed(member_died_embed);
+        }
+    }
+
     ctx.send(reply).await?;
 
     *active_voting = None;

@@ -2,7 +2,8 @@ use std::{collections::HashSet, sync::Arc};
 
 use ddf_bot::{
     commands::{
-        game::{add_user, show_game, start_game},
+        game::{add_user, remove_user, show_game, start_game},
+        set_lives::set_lives,
         vote::{end_voting, start_voting, vote},
     },
     data::Data,
@@ -35,9 +36,11 @@ async fn main() -> Result<(), Error> {
                 show_game(),
                 start_game(),
                 add_user(),
+                remove_user(),
                 start_voting(),
                 vote(),
                 end_voting(),
+                set_lives(),
             ],
             on_error: |err: FrameworkError<'_, Arc<Data>, Error>| Box::pin(handle_error(err)),
             owners: HashSet::from_iter([UserId::new(350749990681051149)]),

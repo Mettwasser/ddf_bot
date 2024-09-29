@@ -7,8 +7,8 @@ pub struct MissingRole(pub u64);
 #[macro_export]
 macro_rules! has_role {
     ($fn_name:ident, $role_id:literal) => {
-        pub async fn $fn_name(ctx: $crate::Context<'_>) -> Result<bool, $crate::Error> {
-            let Context::Application(ctx) = ctx else {
+        pub async fn $fn_name(ctx: $crate::ContextEnum<'_>) -> Result<bool, $crate::Error> {
+            let $crate::ContextEnum::Application(ctx) = ctx else {
                 unreachable!()
             };
             let member = ctx.author_member().await.unwrap();

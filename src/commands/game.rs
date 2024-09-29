@@ -1,15 +1,32 @@
-use {
-    crate::{game::Game, has_role, CmdRet, Context, Error, DEFAULT_COLOR},
-    poise::{
-        command,
-        serenity_prelude::{
-            futures::StreamExt, ButtonStyle, Color, ComponentInteraction,
-            ComponentInteractionCollector, CreateActionRow, CreateButton, CreateEmbed,
-            CreateInteractionResponse, CreateInteractionResponseMessage, Member, Mentionable,
-        },
-        CreateReply,
+use std::{collections::HashMap, time::Duration};
+
+use poise::{
+    command,
+    serenity_prelude::{
+        futures::StreamExt,
+        ButtonStyle,
+        Color,
+        ComponentInteraction,
+        ComponentInteractionCollector,
+        CreateActionRow,
+        CreateButton,
+        CreateEmbed,
+        CreateInteractionResponse,
+        CreateInteractionResponseMessage,
+        Member,
+        Mentionable,
     },
-    std::{collections::HashMap, time::Duration},
+    CreateReply,
+};
+
+use crate::{
+    checks::{is_game_moderator, needs_active_game},
+    game::Game,
+    has_role,
+    CmdRet,
+    Context,
+    Error,
+    DEFAULT_COLOR,
 };
 
 fn get_remaining_lives_string(number_of_lives: i32) -> String {
@@ -17,13 +34,6 @@ fn get_remaining_lives_string(number_of_lives: i32) -> String {
 }
 
 has_role!(has_mod_role, 1282277932798312513);
-
-pub async fn needs_active_game(ctx: Context<'_>) -> Result<bool, Error> {
-    match &*ctx.data().game.lock().await {
-        Some(_) => Ok(true),
-        None => Err("Es ist kein aktives Spiel vorhanden".into()),
-    }
-}
 
 #[command(slash_command, rename = "start-game", guild_only, check = has_mod_role)]
 pub async fn start_game(
@@ -40,20 +50,20 @@ pub async fn start_game(
 pub async fn prompt_override_game(ctx: Context<'_>, moderator: Member) -> CmdRet {
     let ctx_id = ctx.id().to_string();
 
-    let yes_no_id = (format!("{ctx_id}_yes"), format!("{ctx_id}_no"));
+    let (yes_id, no_id) = (format!("{ctx_id}_yes"), format!("{ctx_id}_no"));
 
     ctx.send(
         CreateReply::default()
             .embed(
-                CreateEmbed::new()
+                CreateEmbed::default()
                     .description("Es gibt ein laufendes Spiel.\nMöchtest du es überschreiben?")
                     .color(Color::RED),
             )
             .components(vec![CreateActionRow::Buttons(vec![
-                CreateButton::new(&yes_no_id.1)
+                CreateButton::new(&no_id)
                     .label("Nein")
                     .style(ButtonStyle::Danger),
-                CreateButton::new(&yes_no_id.0)
+                CreateButton::new(&yes_id)
                     .label("Ja")
                     .style(ButtonStyle::Success),
             ])]),
@@ -68,7 +78,7 @@ pub async fn prompt_override_game(ctx: Context<'_>, moderator: Member) -> CmdRet
 
     if let Some(press) = collector.next().await {
         match &press.data.custom_id {
-            id if id == &yes_no_id.0 => create_new_game(ctx, moderator, Some(press)).await?,
+            id if id == &yes_id => create_new_game(ctx, moderator, Some(press)).await?,
             _ => {
                 press
                     .create_response(
@@ -76,7 +86,7 @@ pub async fn prompt_override_game(ctx: Context<'_>, moderator: Member) -> CmdRet
                         CreateInteractionResponse::UpdateMessage(
                             CreateInteractionResponseMessage::new()
                                 .embed(
-                                    CreateEmbed::new()
+                                    CreateEmbed::default()
                                         .description("Abgebrochen")
                                         .color(Color::RED),
                                 )
@@ -96,12 +106,10 @@ pub async fn create_new_game(
     moderator: Member,
     edit_on: Option<ComponentInteraction>,
 ) -> CmdRet {
-    let Context::Application(ctx) = ctx else {
-        unreachable!()
-    };
     let mut game = ctx.data().game.lock().await;
+    let mut vote = ctx.data().voting.lock().await;
 
-    let embed = CreateEmbed::new()
+    let embed = CreateEmbed::default()
         .title("Spiel gestartet")
         .description(format!(
             "✅ Das Spiel wurde mit {} als Moderator wurde erfolgreich gestartet",
@@ -114,6 +122,8 @@ pub async fn create_new_game(
         creator: *ctx.interaction.member.as_ref().unwrap().clone(),
         members: HashMap::new(),
     });
+
+    *vote = None;
 
     if let Some(interaction) = edit_on {
         interaction
@@ -133,27 +143,58 @@ pub async fn create_new_game(
     Ok(())
 }
 
-#[command(slash_command, rename = "add-user", guild_only, check = has_mod_role, check = needs_active_game)]
+#[command(slash_command, rename = "add-user", guild_only, check = needs_active_game, check = is_game_moderator)]
 pub async fn add_user(
     ctx: Context<'_>,
-    #[description = "Der Benutzer der hinzugefügt werden soll"]
+    #[description = "Der User der hinzugefügt werden soll"]
     #[rename = "user"]
     member: Member,
     lives: Option<i32>,
 ) -> CmdRet {
-    ctx.data()
-        .game
-        .lock()
-        .await
-        .as_mut()
-        .unwrap()
-        .members
-        .insert(member.user.id, lives.unwrap_or(3));
+    {
+        let mut lock = ctx.data().game.lock().await;
+        let game = lock.as_mut().unwrap();
+
+        if game.contains_player(&member.user) {
+            return Err(format!("{} ist bereits im Spiel.", member.mention()).into());
+        }
+
+        game.members.insert(member.user.id, lives.unwrap_or(3));
+    }
 
     ctx.send(
         CreateReply::default().embed(
-            CreateEmbed::new()
-                .description(format!("➕ Nutzer {} wurde hinzugefügt", member.mention()))
+            CreateEmbed::default()
+                .description(format!("➕ User {} wurde hinzugefügt", member.mention()))
+                .color(DEFAULT_COLOR),
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+#[command(slash_command, rename = "remove-user", guild_only, check = is_game_moderator, check = needs_active_game)]
+pub async fn remove_user(
+    ctx: Context<'_>,
+    #[description = "Der User der entfernt werden soll"]
+    #[rename = "user"]
+    member: Member,
+) -> CmdRet {
+    {
+        let mut lock = ctx.data().game.lock().await;
+        let game = lock.as_mut().unwrap();
+
+        if !game.contains_player(&member.user) {
+            return Err(format!("{} ist nicht im Spiel.", member.mention()).into());
+        }
+
+        game.members.remove(&member.user.id);
+    }
+
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::default()
+                .description(format!("➖ User {} wurde entfernt", member.mention()))
                 .color(DEFAULT_COLOR),
         ),
     )
@@ -163,13 +204,15 @@ pub async fn add_user(
 
 #[command(slash_command, rename = "show-game", guild_only, check = needs_active_game)]
 pub async fn show_game(ctx: Context<'_>) -> CmdRet {
-    let game = ctx.data().game.lock().await;
-    let users = &game.as_ref().unwrap().members;
+    let lock = ctx.data().game.lock().await;
+    let game = lock.as_ref().expect("Expected an active game");
+
+    let users = &game.members;
 
     let mut description = String::new();
 
     if users.is_empty() {
-        description.push_str("Es sind keine Nutzer in diesem Spiel")
+        description.push_str("Es sind keine User in diesem Spiel")
     } else {
         for (user, lives) in users {
             let user = user.to_user(ctx).await?;
@@ -195,8 +238,7 @@ pub async fn show_game(ctx: Context<'_>) -> CmdRet {
         }
     }
 
-    let embed = CreateEmbed::new()
-        .title("Das aktuelle Spiel")
+    let embed = CreateEmbed::default()
         .description(description)
         .color(DEFAULT_COLOR);
 
@@ -214,7 +256,7 @@ pub async fn end_game(ctx: Context<'_>) -> CmdRet {
     ctx.send(
         CreateReply::default()
             .embed(
-                CreateEmbed::new()
+                CreateEmbed::default()
                     .description("Möchtest du das laufende Spiel wirklich beenden?")
                     .color(Color::RED),
             )
@@ -249,7 +291,7 @@ pub async fn end_game(ctx: Context<'_>) -> CmdRet {
                         CreateInteractionResponse::UpdateMessage(
                             CreateInteractionResponseMessage::new()
                                 .embed(
-                                    CreateEmbed::new()
+                                    CreateEmbed::default()
                                         .description("Das Spiel wurde erfolgreich beendet")
                                         .color(DEFAULT_COLOR),
                                 )
@@ -265,7 +307,7 @@ pub async fn end_game(ctx: Context<'_>) -> CmdRet {
                         CreateInteractionResponse::UpdateMessage(
                             CreateInteractionResponseMessage::new()
                                 .embed(
-                                    CreateEmbed::new()
+                                    CreateEmbed::default()
                                         .description("Abgebrochen")
                                         .color(Color::RED),
                                 )

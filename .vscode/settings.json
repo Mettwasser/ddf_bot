@@ -4,9 +4,14 @@
         "absofort",
         "builtins",
         "dotenv",
+        "geupdated",
         "gevotet",
+        "LIBAFO",
         "thiserror",
         "tokio",
         "votings"
+    ],
+    "rust-analyzer.rustfmt.extraArgs": [
+        "+nightly"
     ]
 }
