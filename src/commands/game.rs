@@ -22,10 +22,8 @@ use poise::{
 use crate::{
     checks::{is_game_moderator, needs_active_game},
     game::Game,
-    has_role,
     CmdRet,
     Context,
-    Error,
     DEFAULT_COLOR,
 };
 
@@ -33,9 +31,7 @@ fn get_remaining_lives_string(number_of_lives: i32) -> String {
     format!("{number_of_lives} ❤")
 }
 
-has_role!(has_mod_role, 1282277932798312513);
-
-#[command(slash_command, rename = "start-game", guild_only, check = has_mod_role)]
+#[command(slash_command, rename = "start-game", guild_only)]
 pub async fn start_game(
     ctx: Context<'_>,
     #[description = "Der Moderator des Spiels"] moderator: Member,
@@ -155,11 +151,7 @@ pub async fn add_user(
         let mut lock = ctx.data().game.lock().await;
         let game = lock.as_mut().unwrap();
 
-        if game.contains_player(&member.user) {
-            return Err(format!("{} ist bereits im Spiel.", member.mention()).into());
-        }
-
-        game.members.insert(member.user.id, lives.unwrap_or(3));
+        game.add_player(&member.user, lives.unwrap_or(3))?;
     }
 
     ctx.send(
@@ -184,11 +176,7 @@ pub async fn remove_user(
         let mut lock = ctx.data().game.lock().await;
         let game = lock.as_mut().unwrap();
 
-        if !game.contains_player(&member.user) {
-            return Err(format!("{} ist nicht im Spiel.", member.mention()).into());
-        }
-
-        game.members.remove(&member.user.id);
+        game.remove_player(ctx.author())?;
     }
 
     ctx.send(
@@ -247,7 +235,7 @@ pub async fn show_game(ctx: Context<'_>) -> CmdRet {
     Ok(())
 }
 
-#[command(slash_command, rename = "end-game", guild_only, check = has_mod_role, check = needs_active_game)]
+#[command(slash_command, rename = "end-game", guild_only, check = needs_active_game)]
 pub async fn end_game(ctx: Context<'_>) -> CmdRet {
     let ctx_id = ctx.id().to_string();
 

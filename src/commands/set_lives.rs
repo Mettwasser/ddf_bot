@@ -16,13 +16,7 @@ pub async fn set_lives(ctx: Context<'_>, #[rename = "user"] member: Member, amou
     let mut lock = ctx.data().game.lock().await;
     let game = lock.as_mut().unwrap();
 
-    if !game.contains_player(&member.user) {
-        return Err(format!("{} ist nicht im Spiel.", member.mention()).into());
-    }
-
-    game.members
-        .entry(member.user.id)
-        .and_modify(|current| *current = amount);
+    game.set_player_health(ctx.author(), amount)?;
 
     let embed = CreateEmbed::default()
         .title("User wurde geupdated.")

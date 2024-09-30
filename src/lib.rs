@@ -1,6 +1,5 @@
 pub mod checks;
 pub mod error;
-pub mod utils;
 use std::sync::Arc;
 
 use data::Data;

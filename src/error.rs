@@ -3,7 +3,7 @@ use poise::{
     CreateReply,
 };
 
-use crate::{utils::MissingRole, Context, Error, FrameworkError, IntoAppContext};
+use crate::{Context, Error, FrameworkError, IntoAppContext};
 
 pub fn error_embed(description: impl Into<String>) -> CreateEmbed {
     CreateEmbed::default()
@@ -56,23 +56,15 @@ pub async fn handle_command_check_error(
     err: Error,
     ctx: Context<'_>,
 ) -> Result<(), serenity_prelude::Error> {
-    if let Some(err) = err.downcast_ref::<MissingRole>() {
-        ctx.send(CreateReply::default().embed(error_embed(format!(
-            "Dir fehlt die {} Rolle.",
-            ctx.guild_id().unwrap().roles(ctx).await?.get(&RoleId::new(err.0)).unwrap().mention()
-        ))))
-        .await?;
-    } else {
-        ctx.send(
-            CreateReply::default().embed(
-                CreateEmbed::default()
-                    .title("Fehler")
-                    .description(err.to_string())
-                    .color(Color::DARK_RED),
-            ),
-        )
-        .await?;
-    }
+    ctx.send(
+        CreateReply::default().embed(
+            CreateEmbed::default()
+                .title("Fehler")
+                .description(err.to_string())
+                .color(Color::DARK_RED),
+        ),
+    )
+    .await?;
 
     Ok(())
 }
