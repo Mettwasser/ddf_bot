@@ -1,5 +1,5 @@
 use poise::{
-    serenity_prelude::{self, Color, CreateEmbed, Mentionable, RoleId},
+    serenity_prelude::{self, Color, CreateEmbed},
     CreateReply,
 };
 
