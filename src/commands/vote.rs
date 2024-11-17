@@ -33,8 +33,11 @@ use crate::{
     game::Voting,
     CmdRet,
     Context,
+    Error,
     DEFAULT_COLOR,
 };
+
+type MemberVoteCount = HashMap<UserId, i32>;
 
 #[command(slash_command, rename = "start-voting", guild_only, check = needs_active_game, check = is_game_moderator)]
 pub async fn start_voting(ctx: Context<'_>) -> CmdRet {
@@ -183,7 +186,79 @@ enum VoteOutcome {
     },
 }
 
-fn evaluate_votes(votes: &HashMap<UserId, i32>) -> VoteOutcome {
+#[command(slash_command, rename = "end-voting", guild_only, check = needs_active_voting, check = needs_active_game, check = is_game_moderator)]
+pub async fn end_voting(ctx: Context<'_>) -> CmdRet {
+    let mut voting = ctx.data().voting.lock().await;
+
+    let mut lock = ctx.data().game.lock().await;
+    let game = lock.as_mut().expect("Expected an active game");
+
+    let (votes, mut who_voted_who_description) =
+        sum_up_votes(&voting.as_ref().unwrap().map).await?;
+
+    let mut member_died_embed: Option<CreateEmbed> = None;
+
+    match decide_winner(&votes) {
+        VoteOutcome::ClearWinner { user, num_votes } => {
+            // ...and remove 1 hp from them
+            game.members.entry(user).and_modify(|hp| *hp -= 1);
+            let member = ctx
+                .guild_id()
+                .expect("guild ID should be set")
+                .member(ctx, user)
+                .await?;
+
+            who_voted_who_description.push_str(&format!(
+                "**{member} hat mit `{num_votes}` die meisten votes und verliert ein Leben!**"
+            ));
+
+            // check if the member that lost a life 'died' this round
+            if game.is_player_dead(user)? {
+                member_died_embed = Some(
+                    CreateEmbed::default()
+                        .description(format!("{member} ist ausgeschieden."))
+                        .color(DEFAULT_COLOR),
+                )
+            }
+        },
+        VoteOutcome::NoClearWinner {
+            members_with_equal_votes_count,
+            max_vote_count,
+        } => who_voted_who_description.push_str(&format!(
+            "**{} Leute haben mit {} gleich viele Votes - Gleichstand!**",
+            members_with_equal_votes_count, max_vote_count
+        )),
+    }
+
+    let reply = create_end_voting_response(who_voted_who_description, &votes, member_died_embed);
+    ctx.send(reply).await?;
+
+    *voting = None;
+    Ok(())
+}
+
+/// Sums up all votes of a specific member by providing a member->member map
+async fn sum_up_votes(
+    member_to_member_votes: &HashMap<UserId, UserId>,
+) -> Result<(MemberVoteCount, String), Error> {
+    let mut votes = HashMap::new();
+
+    let mut who_voted_who_description = String::new();
+    // Create vote `Member -> Amount of Votes` mapping
+    for (voter, voted) in member_to_member_votes {
+        votes.entry(*voted).and_modify(|num| *num += 1).or_insert(1);
+
+        who_voted_who_description.push_str(&format!(
+            "{} hat {} gevotet!\n\n",
+            voter.mention(),
+            voted.mention()
+        ))
+    }
+
+    Ok((votes, who_voted_who_description))
+}
+
+fn decide_winner(votes: &MemberVoteCount) -> VoteOutcome {
     let max_num_of_votes = *votes.values().max_by_key(|n| **n).unwrap();
     let n = votes
         .values()
@@ -206,7 +281,7 @@ fn evaluate_votes(votes: &HashMap<UserId, i32>) -> VoteOutcome {
     }
 }
 
-fn get_voting_count_overview(votes: &HashMap<UserId, i32>) -> CreateEmbed {
+fn get_voting_count_embed(votes: &HashMap<UserId, i32>) -> CreateEmbed {
     let mut description = String::new();
 
     for (user, amount_votes) in votes.iter().sorted_by(|a, b| a.1.cmp(b.1)) {
@@ -219,87 +294,26 @@ fn get_voting_count_overview(votes: &HashMap<UserId, i32>) -> CreateEmbed {
         .color(DEFAULT_COLOR)
 }
 
-#[command(slash_command, rename = "end-voting", guild_only, check = needs_active_voting, check = needs_active_game, check = is_game_moderator)]
-pub async fn end_voting(ctx: Context<'_>) -> CmdRet {
-    let mut active_voting = ctx.data().voting.lock().await;
-    let mut game = ctx.data().game.lock().await;
-
-    let mut who_voted_who_description = String::new();
-    let mut votes: HashMap<UserId, i32> = HashMap::new();
-
-    let mut member_died_embed: Option<CreateEmbed> = None;
-
+fn create_end_voting_response(
+    who_voted_who_description: String,
+    votes: &HashMap<UserId, i32>,
+    member_died_embed: Option<CreateEmbed>,
+) -> CreateReply {
     let mut reply = CreateReply::default();
+    // overview - who voted which person?
+    reply = reply.embed(
+        CreateEmbed::default()
+            .title("Voting ist zuende.")
+            .description(who_voted_who_description)
+            .color(DEFAULT_COLOR),
+    );
 
-    let guild = ctx.guild_id().unwrap();
+    // overview of all votes
+    reply = reply.embed(get_voting_count_embed(votes));
 
-    // Create vote `Member -> Amount of Votes` mapping
-    for (voter, voted) in &active_voting.as_ref().unwrap().map {
-        let voter_member = guild.member(ctx, voter).await?;
-        let voted_member = guild.member(ctx, voted).await?;
-
-        votes.entry(*voted).and_modify(|num| *num += 1).or_insert(1);
-
-        who_voted_who_description.push_str(&format!(
-            "{} hat {} gevotet!\n\n",
-            voter_member.mention(),
-            voted_member.mention()
-        ))
+    // additional info whether a member died in this round
+    if let Some(member_died_embed) = member_died_embed {
+        reply = reply.embed(member_died_embed);
     }
-
-    match evaluate_votes(&votes) {
-        VoteOutcome::ClearWinner { user, num_votes } => {
-            // ...and remove 1 hp from them
-            game.as_mut()
-                .unwrap()
-                .members
-                .entry(user)
-                .and_modify(|hp| *hp -= 1);
-            let member = guild.member(ctx, user).await?;
-
-            who_voted_who_description.push_str(&format!(
-                "**{member} hat mit `{num_votes}` die meisten votes und verliert ein Leben!**"
-            ));
-
-            // check if the member that lost a life 'died' this round
-            if *game.as_ref().unwrap().members.get(&user).unwrap() <= 0 {
-                member_died_embed = Some(
-                    CreateEmbed::default()
-                        .description(format!("{member} is ausgeschieden."))
-                        .color(DEFAULT_COLOR),
-                )
-            }
-        },
-        VoteOutcome::NoClearWinner {
-            members_with_equal_votes_count,
-            max_vote_count: max_votes,
-        } => who_voted_who_description.push_str(&format!(
-            "**{} Leute haben mit {} gleich viele Votes - Gleichstand!**",
-            members_with_equal_votes_count, max_votes
-        )),
-    }
-
-    // construct embed(s)
-    {
-        // overview - who voted which person?
-        reply = reply.embed(
-            CreateEmbed::default()
-                .title("Voting ist zuende.")
-                .description(who_voted_who_description)
-                .color(DEFAULT_COLOR),
-        );
-
-        // overview of all votes
-        reply = reply.embed(get_voting_count_overview(&votes));
-
-        // additional info whether a member died in this round
-        if let Some(member_died_embed) = member_died_embed {
-            reply = reply.embed(member_died_embed);
-        }
-    }
-
-    ctx.send(reply).await?;
-
-    *active_voting = None;
-    Ok(())
+    reply
 }

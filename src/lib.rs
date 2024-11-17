@@ -1,5 +1,6 @@
 pub mod checks;
 pub mod error;
+pub mod models;
 use std::sync::Arc;
 
 use data::Data;

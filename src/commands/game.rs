@@ -151,7 +151,7 @@ pub async fn add_user(
         let mut lock = ctx.data().game.lock().await;
         let game = lock.as_mut().unwrap();
 
-        game.add_player(&member.user, lives.unwrap_or(3))?;
+        game.add_player(member.user.id, lives.unwrap_or(3))?;
     }
 
     ctx.send(
@@ -176,7 +176,7 @@ pub async fn remove_user(
         let mut lock = ctx.data().game.lock().await;
         let game = lock.as_mut().unwrap();
 
-        game.remove_player(ctx.author())?;
+        game.remove_player(ctx.author().id)?;
     }
 
     ctx.send(

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use poise::serenity_prelude::{Member, Mentionable, User, UserId};
+use poise::serenity_prelude::{Member, Mentionable, UserId};
 
-#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
 pub enum PlayerError {
     #[error("{} ist bereits im Spiel.", _0.mention())]
     PlayerAlreadyAdded(UserId),
@@ -20,33 +20,45 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn contains_player(&self, player: &User) -> bool {
-        self.members.contains_key(&player.id)
+    pub fn contains_player(&self, player: UserId) -> bool {
+        self.members.contains_key(&player)
     }
 
-    pub fn add_player(&mut self, player: &User, health: i32) -> Result<(), PlayerError> {
-        if self.members.contains_key(&player.id) {
-            return Err(PlayerError::PlayerAlreadyAdded(player.id));
+    pub fn add_player(&mut self, player: UserId, health: i32) -> Result<(), PlayerError> {
+        if self.members.contains_key(&player) {
+            return Err(PlayerError::PlayerAlreadyAdded(player));
         }
 
-        self.members.entry(player.id).or_insert(health);
+        self.members.entry(player).or_insert(health);
         Ok(())
     }
 
-    pub fn remove_player(&mut self, player: &User) -> Result<(), PlayerError> {
+    pub fn remove_player(&mut self, player: UserId) -> Result<(), PlayerError> {
         self.members
-            .remove(&player.id)
+            .remove(&player)
             .map(|_| ())
-            .ok_or(PlayerError::PlayerNotInGame(player.id))
+            .ok_or(PlayerError::PlayerNotInGame(player))
     }
 
-    pub fn set_player_health(&mut self, player: &User, health: i32) -> Result<(), PlayerError> {
-        if let Some(player_health) = self.members.get_mut(&player.id) {
+    pub fn set_player_health(&mut self, player: UserId, health: i32) -> Result<(), PlayerError> {
+        if let Some(player_health) = self.members.get_mut(&player) {
             *player_health = health;
             Ok(())
         } else {
-            Err(PlayerError::PlayerNotInGame(player.id))
+            Err(PlayerError::PlayerNotInGame(player))
         }
+    }
+
+    pub fn is_player_dead(&self, player: UserId) -> Result<bool, PlayerError> {
+        if let Some(player_health) = self.members.get(&player) {
+            Ok(*player_health <= 0)
+        } else {
+            Err(PlayerError::PlayerNotInGame(player))
+        }
+    }
+
+    pub fn is_player_alive(&self, player: UserId) -> Result<bool, PlayerError> {
+        self.is_player_dead(player).map(|is_alive| !is_alive)
     }
 }
 

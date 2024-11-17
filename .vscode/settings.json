@@ -6,6 +6,8 @@
         "dotenv",
         "geupdated",
         "gevotet",
+        "itertools",
+        "Itertools",
         "LIBAFO",
         "thiserror",
         "tokio",

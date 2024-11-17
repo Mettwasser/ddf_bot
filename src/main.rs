@@ -16,6 +16,7 @@ use poise::{
 };
 
 #[tokio::main]
+#[allow(clippy::needless_return)] // idk why clippy warns here
 async fn main() -> Result<(), Error> {
     dotenv::dotenv().unwrap();
     tracing_subscriber::fmt()
